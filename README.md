@@ -172,13 +172,42 @@ many it returned, at 100,000 transactions.** DynamoDB gives you `ScannedCount`
 and `Count`; MongoDB gives you `totalDocsExamined` and `nReturned`. Put the six
 numbers in your README.
 
+### Choice of Document Store: DynamoDB
+
+We selected **DynamoDB** (run locally via `docker compose up -d` with `amazon/dynamodb-local:latest`) over MongoDB for three reasons:
+1. **Access-Pattern Driven Single-Table Design**: The service has exactly three defined read access patterns. DynamoDB's partition key (`PK`) and sort key (`SK`) design allows modeling all three access patterns in a single table with predictable $O(1)$ point lookups or partition scans without any unbounded collection scans.
+2. **Zero-Dependency JDK Compatibility**: DynamoDB exposes a straightforward JSON/HTTP protocol. We implemented `DynamoDocumentStore` using standard Java 11+ `java.net.http.HttpClient` and our existing `Json` parser, which means the application compiles and runs directly against the JDK without heavy third-party driver dependencies (unlike MongoDB which requires the `mongodb-driver-sync` BSON library). This preserves `verify.sh`'s zero-dependency mandate.
+3. **Deterministic Scale & Cost**: At 100,000+ transactions, DynamoDB guarantees single-digit millisecond latency because reads are restricted to partition keys.
+
+#### Document Schema Design (`ledger_documents` table)
+- **Table Name**: `ledger_documents`
+- **Primary Key**: `PK` (String, Partition Key), `SK` (String, Sort Key)
+
+| Item Type | Partition Key (`PK`) | Sort Key (`SK`) | Attributes Stored |
+|---|---|---|---|
+| **Transaction Item** | `ACCT#<last4>#<yyyy-MM>` | `TXN#<occurredAt>#<dir>#<amt>` | `accountLast4`, `occurredAt`, `direction`, `amount`, `category`, `merchant`, `sourceMessageIds` |
+| **Running Category Totals** | `ACCT#<last4>` | `TOTALS` | `SPEND`, `INCOME`, `MICRO`, `TRANSFER` (pre-aggregated running totals) |
+| **Message Inverted Index** | `MSG#<messageId>` | `REF` | Transaction attributes + `txnPK`, `txnSK` pointer |
+
 ### DynamoDB Performance Report (at 100,000 transactions)
 
-| Query Access Pattern | `ScannedCount` (Examined) | `Count` (Returned) | Notes |
+| Query Access Pattern | `ScannedCount` (Examined) | `Count` (Returned) | Access Strategy |
 |---|---|---|---|
-| **Q1: `forAccountMonth(accountLast4, month)`** | 50 | 50 | Partition Key is `ACCT#<last4>#<yyyy-MM>`, sorted by Sort Key `TXN#<occurredAt>`. Only the partition is read (newest first). Exact 1:1 ratio. |
-| **Q2: `categoryTotals(accountLast4)`** | 1 | 1 | Stored as a dedicated pre-aggregated document (`PK = ACCT#<last4>`, `SK = TOTALS`). Direct `GetItem` lookup requires reading only 1 document instead of scanning 100,000. |
-| **Q3: `byMessageId(messageId)`** | 1 | 1 | Direct inverted index lookup (`PK = MSG#<messageId>`, `SK = REF`). Direct `GetItem` examines 1 item and returns 1 item. |
+| **Q1: `forAccountMonth(accountLast4, month)`** | 50 | 50 | `Query` with `PK = ACCT#<last4>#<yyyy-MM>`, `ScanIndexForward = false`. Only items within the month partition are examined (newest first). Exact 1:1 ratio. |
+| **Q2: `categoryTotals(accountLast4)`** | 1 | 1 | `GetItem` with `PK = ACCT#<last4>`, `SK = TOTALS`. O(1) point lookup on pre-aggregated document. Reads 1 document instead of scanning 100,000. |
+| **Q3: `byMessageId(messageId)`** | 1 | 1 | `GetItem` with `PK = MSG#<messageId>`, `SK = REF`. Direct inverted index point lookup. Reads 1 item. |
+
+### Backfill & Consistency Checker
+
+- **`Backfill`**:
+  - Legacy SQL tables often contain duplicate entries for the same real transaction (e.g. alert retries or multiple notifications).
+  - Groups SQL rows by natural transaction identity `(accountLast4, occurredAt, direction, amount)`, merges all `sourceMessageIds` into a sorted distinct list, and checks if target `DocumentStore` already contains the transaction.
+  - Fully idempotent: multiple executions or resuming after partial failures skip existing records without re-inserting or duplicating totals.
+- **`ConsistencyChecker`**:
+  - Compares canonical SQL transactions against `DocumentStore` records field-by-field (`amount`, `direction`, `category`, `merchant`, `sourceMessageIds`).
+  - Validates `byMessageId` inverted index resolution for every message.
+  - Validates aggregated running category totals for every account.
+  - Detects extraneous or altered records in `DocumentStore` that have no matching source in SQL.
 
 ---
 
