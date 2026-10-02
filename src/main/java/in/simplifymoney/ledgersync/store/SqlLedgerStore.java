@@ -139,6 +139,45 @@ public final class SqlLedgerStore implements LedgerStore, AutoCloseable {
         }
     }
 
+    public void saveDiscrepancy(String accountLast4, String occurredAt, BigDecimal amount, String note) {
+        try (PreparedStatement ps = conn.prepareStatement(
+                "INSERT INTO reconciliation_discrepancies(account_last4, occurred_at, amount, note)"
+                        + " VALUES (?,?,?,?)")) {
+            ps.setString(1, accountLast4);
+            ps.setString(2, occurredAt);
+            ps.setBigDecimal(3, amount);
+            ps.setString(4, note);
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            throw new IllegalStateException("could not save discrepancy", e);
+        }
+    }
+
+    public List<Map<String, Object>> allDiscrepancies() {
+        List<Map<String, Object>> out = new ArrayList<>();
+        try (Statement st = conn.createStatement();
+             ResultSet rs = st.executeQuery(
+                     "SELECT account_last4, occurred_at, amount, note FROM reconciliation_discrepancies ORDER BY occurred_at")) {
+            while (rs.next()) {
+                Map<String, Object> m = new java.util.LinkedHashMap<>();
+                m.put("account_last4", rs.getString(1));
+                m.put("occurred_at", rs.getString(2));
+                m.put("amount", rs.getBigDecimal(3).setScale(2).toPlainString());
+                m.put("note", rs.getString(4));
+                out.add(m);
+            }
+        } catch (SQLException e) {
+            // Table might not exist yet
+        }
+        return out;
+    }
+
+    public void clearDiscrepancies() {
+        try (Statement st = conn.createStatement()) {
+            st.execute("DELETE FROM reconciliation_discrepancies");
+        } catch (SQLException ignored) {}
+    }
+
     @Override
     public void close() {
         try { conn.close(); } catch (SQLException ignored) { }
