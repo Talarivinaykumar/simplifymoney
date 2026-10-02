@@ -45,4 +45,34 @@ class AmountsTest {
     void ignoresAMessageWithNoAmountAtAll() {
         assertEquals(null, Amounts.first("Your Swiggy order is on the way!"));
     }
+
+    @Test
+    void reproducesAndFixesIncidentInc20260911() {
+        // INC-2026-09-11: "Rs.5 debited from a/c **4821 on 04-07-26 at 07:19 to UPI/WATER CAN. Avl Bal: Rs.92,213.10."
+        // Buggy regex skipped "Rs.5" because it lacked decimals, capturing the balance 92213.10 instead.
+        String msg = "Rs.5 debited from a/c **4821 on 04-07-26 at 07:19 to UPI/WATER CAN. Avl Bal: Rs.92,213.10. Not you? Call 18002586161";
+        assertEquals(new BigDecimal("5.00"), Amounts.first(msg));
+        assertEquals(new BigDecimal("92213.10"), Amounts.statedBalance(msg));
+    }
+
+    @Test
+    void readsWholeRupeesWithInrPrefix() {
+        String msg = "Dear Customer, Acct XX9075 is credited with INR 18,000 on 01/07/2026 21:14. Info: NEFT INWARD SELF. Avl Bal Rs.49,882.25 -ICICI Bank";
+        assertEquals(new BigDecimal("18000.00"), Amounts.first(msg));
+        assertEquals(new BigDecimal("49882.25"), Amounts.statedBalance(msg));
+    }
+
+    @Test
+    void readsWholeRupeesWithSpacePrefix() {
+        String msg = "Rs 8,000 debited from a/c **4821 on 05-07-26 at 11:00 to IMPS/P2A/PARAG KAPOOR. Avl Bal: Rs.80,071.04. Not you? Call 18002586161";
+        assertEquals(new BigDecimal("8000.00"), Amounts.first(msg));
+        assertEquals(new BigDecimal("80071.04"), Amounts.statedBalance(msg));
+    }
+
+    @Test
+    void readsStatedBalanceWithoutColon() {
+        String msg = "ICICI Bank Acct XX9075 Dr INR 5 on 23-Jul-2026 18:41; UPI/BARBER ref no 154245459403. BalAvl Rs 52,841.30";
+        assertEquals(new BigDecimal("5.00"), Amounts.first(msg));
+        assertEquals(new BigDecimal("52841.30"), Amounts.statedBalance(msg));
+    }
 }

@@ -24,15 +24,27 @@ public final class Dates {
             DateTimeFormatter.ofPattern("dd MMM yy HH:mm", Locale.ENGLISH),
             DateTimeFormatter.ofPattern("dd-MMM-yyyy HH:mm", Locale.ENGLISH));
 
+    private static final DateTimeFormatter EMAIL_FORMAT =
+            DateTimeFormatter.ofPattern("EEE, dd MMM yyyy HH:mm:ss Z", Locale.ENGLISH);
+
     /** Parse a local date-time written by a bank, as IST. */
     public static OffsetDateTime ist(String dateAndTime) {
+        String trimmed = dateAndTime.trim();
         for (DateTimeFormatter f : SMS_FORMATS) {
             try {
-                return LocalDateTime.parse(dateAndTime.trim(), f).atOffset(IST);
+                return LocalDateTime.parse(trimmed, f).atOffset(IST);
             } catch (DateTimeParseException ignored) {
                 // try the next shape
             }
         }
+        try {
+            return OffsetDateTime.parse(trimmed, DateTimeFormatter.RFC_1123_DATE_TIME)
+                    .withOffsetSameInstant(IST);
+        } catch (DateTimeParseException ignored) {}
+        try {
+            return OffsetDateTime.parse(trimmed, EMAIL_FORMAT)
+                    .withOffsetSameInstant(IST);
+        } catch (DateTimeParseException ignored) {}
         return null;
     }
 }
