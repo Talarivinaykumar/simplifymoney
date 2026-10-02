@@ -38,6 +38,7 @@ public final class App {
                 if (args.length < 2) throw new IllegalArgumentException("ingest needs a corpus");
                 try (SqlLedgerStore store = new SqlLedgerStore(DB)) {
                     store.migrate(MIGRATIONS);
+                    store.clearLedger();
                     var stats = new IngestService(new Parsers(), store)
                             .ingestFile(Path.of(args[1]));
                     System.out.println(stats);

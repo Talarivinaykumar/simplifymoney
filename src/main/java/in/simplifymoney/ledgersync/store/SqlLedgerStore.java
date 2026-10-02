@@ -179,6 +179,14 @@ public final class SqlLedgerStore implements LedgerStore, AutoCloseable {
         } catch (SQLException ignored) {}
     }
 
+    public void clearLedger() {
+        try (Statement st = conn.createStatement()) {
+            st.execute("DELETE FROM ledger");
+        } catch (SQLException e) {
+            throw new IllegalStateException("could not clear ledger", e);
+        }
+    }
+
     @Override
     public void close() {
         try { conn.close(); } catch (SQLException ignored) { }

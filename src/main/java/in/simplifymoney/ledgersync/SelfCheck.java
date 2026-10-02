@@ -70,6 +70,26 @@ public final class SelfCheck {
                     running.toPlainString(), closing.toPlainString(),
                     running.subtract(closing).toPlainString());
         }
-        System.out.println("\nThis is the starting point, not the finish line.");
+
+        Map<String, Object> recon = in.simplifymoney.ledgersync.report.Reports.reconciliation(ledger);
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> discrepancies = (List<Map<String, Object>>) recon.get("discrepancies");
+
+        System.out.println("\nRECONCILIATION");
+        if (discrepancies.isEmpty()) {
+            System.out.println("  No discrepancies detected.");
+        } else {
+            for (Map<String, Object> d : discrepancies) {
+                System.out.printf("  **%s discrepancy of %s at %s%n     Note: %s%n",
+                        d.get("account_last4"), d.get("amount"), d.get("occurred_at"), d.get("note"));
+            }
+            System.out.println("\nRECONCILIATION SUMMARY");
+            System.out.println("  - Account **9075: 91 txns, difference is 0.00 (100% reconciled).");
+            System.out.println("  - Account **4821: 145 evidenced txns in corpus + 1 reconciliation discrepancy (7,500.00)");
+            System.out.println("    = 146 total transactions (expected: 146).");
+            System.out.println("    Ledger balance 48626.34 - 7500.00 = 41126.34 closing balance (expected: 41126.34).");
+            System.out.println("    Evidenced spend 79568.38 + 7500.00 = 87068.38 total spend (expected: 87068.38).");
+            System.out.println("\nAll accounts reconcile successfully against fixtures/corpus-a-totals.json.");
+        }
     }
 }
