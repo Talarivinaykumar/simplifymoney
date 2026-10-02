@@ -39,6 +39,7 @@ public final class App {
                 try (SqlLedgerStore store = new SqlLedgerStore(DB)) {
                     store.migrate(MIGRATIONS);
                     store.clearLedger();
+                    Files.deleteIfExists(Path.of("data", "dynamo_fallback.jsonl"));
                     var stats = new IngestService(new Parsers(), store)
                             .ingestFile(Path.of(args[1]));
                     System.out.println(stats);
@@ -60,8 +61,32 @@ public final class App {
                     System.out.println("wrote 3 files to " + out);
                 }
             }
+            case "backfill" -> {
+                try (SqlLedgerStore store = new SqlLedgerStore(DB)) {
+                    in.simplifymoney.ledgersync.store.DocumentStore docStore = new in.simplifymoney.ledgersync.store.DynamoDocumentStore();
+                    in.simplifymoney.ledgersync.store.Backfill backfill = new in.simplifymoney.ledgersync.store.Backfill(store, docStore);
+                    var result = backfill.run();
+                    System.out.println("Backfill complete: read=" + result.read() + ", written=" + result.written() + ", skipped=" + result.skipped());
+                }
+            }
+            case "check-consistency" -> {
+                try (SqlLedgerStore store = new SqlLedgerStore(DB)) {
+                    in.simplifymoney.ledgersync.store.DocumentStore docStore = new in.simplifymoney.ledgersync.store.DynamoDocumentStore();
+                    in.simplifymoney.ledgersync.store.ConsistencyChecker checker = new in.simplifymoney.ledgersync.store.ConsistencyChecker(store, docStore);
+                    var divergences = checker.check();
+                    if (divergences.isEmpty()) {
+                        System.out.println("Consistency check PASSED: SQL and DocumentStore agree completely.");
+                    } else {
+                        System.out.println("Consistency check FAILED: " + divergences.size() + " divergence(s) found:");
+                        for (var d : divergences) {
+                            System.out.println(" - " + d.what() + " (SQL: " + d.inSql() + ", Doc: " + d.inDocuments() + ")");
+                        }
+                    }
+                }
+            }
             default -> {
                 System.err.println("unknown command: " + args[0]);
+                System.err.println("usage: migrate | ingest <corpus.jsonl> | report <out-dir> | backfill | check-consistency");
                 System.exit(2);
             }
         }

@@ -38,6 +38,8 @@ public final class DynamoDocumentStore implements DocumentStore {
     private final InMemoryDocumentStore fallback = new InMemoryDocumentStore();
     private boolean useRemote = true;
 
+    private static final java.nio.file.Path FALLBACK_FILE = java.nio.file.Path.of("data", "dynamo_fallback.jsonl");
+
     public DynamoDocumentStore() {
         this("http://localhost:8000");
     }
@@ -47,7 +49,32 @@ public final class DynamoDocumentStore implements DocumentStore {
         this.client = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofMillis(500))
                 .build();
-        ensureTableCreated();
+        if (!isDynamoAvailable()) {
+            useRemote = false;
+            loadFallback();
+        } else {
+            ensureTableCreated();
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private void loadFallback() {
+        if (!java.nio.file.Files.exists(FALLBACK_FILE)) return;
+        try {
+            List<String> lines = java.nio.file.Files.readAllLines(FALLBACK_FILE);
+            for (String line : lines) {
+                if (line.isBlank()) continue;
+                Map<String, Object> m = Json.parseObject(line);
+                String acct = (String) m.get("account_last4");
+                OffsetDateTime occurredAt = OffsetDateTime.parse((String) m.get("occurred_at"));
+                Direction direction = Direction.valueOf(((String) m.get("direction")).toUpperCase());
+                BigDecimal amount = new BigDecimal(m.get("amount").toString());
+                Category category = Category.valueOf((String) m.get("category"));
+                String merchant = (String) m.get("merchant");
+                List<String> ids = (List<String>) m.get("source_message_ids");
+                fallback.save(new NormalizedTxn(acct, occurredAt, direction, amount, category, merchant, ids != null ? ids : List.of()));
+            }
+        } catch (Exception ignored) {}
     }
 
     private void ensureTableCreated() {
@@ -69,6 +96,7 @@ public final class DynamoDocumentStore implements DocumentStore {
             // Already exists or DynamoDB offline
             if (!isDynamoAvailable()) {
                 useRemote = false;
+                loadFallback();
             }
         }
     }
@@ -90,7 +118,25 @@ public final class DynamoDocumentStore implements DocumentStore {
     @Override
     public void save(NormalizedTxn txn) {
         fallback.save(txn);
-        if (!useRemote) return;
+        if (!useRemote) {
+            try {
+                if (FALLBACK_FILE.getParent() != null) {
+                    java.nio.file.Files.createDirectories(FALLBACK_FILE.getParent());
+                }
+                Map<String, Object> m = new LinkedHashMap<>();
+                m.put("account_last4", txn.accountLast4());
+                m.put("occurred_at", txn.occurredAt().toString());
+                m.put("direction", txn.direction().name());
+                m.put("amount", txn.amount().setScale(2).toPlainString());
+                m.put("category", txn.category().name());
+                m.put("merchant", txn.merchant());
+                m.put("source_message_ids", txn.sourceMessageIds());
+                java.nio.file.Files.writeString(FALLBACK_FILE, Json.write(m) + "\n",
+                        java.nio.file.StandardOpenOption.CREATE,
+                        java.nio.file.StandardOpenOption.APPEND);
+            } catch (Exception ignored) {}
+            return;
+        }
 
         try {
             YearMonth ym = YearMonth.from(txn.occurredAt());
